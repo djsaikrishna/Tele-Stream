@@ -15,6 +15,7 @@ _DEFAULTS: Dict[str, Any] = {
     "hide_catalog": False,
     "auth_channels": [],
     "tmdb_api": "",
+    "tvdb_api": "",
     "base_url": "",
     "upstream_repo": "https://github.com/weebzone/Telegram-Stremio",
     "upstream_branch": "master",
@@ -60,6 +61,7 @@ def _seed_from_env() -> Dict[str, Any]:
         "hide_catalog":                 Telegram.HIDE_CATALOG,
         "auth_channels":                list(Telegram.AUTH_CHANNEL),
         "tmdb_api":                     Telegram.TMDB_API,
+        "tvdb_api":                     getattr(Telegram, "TVDB_API", "") or "",
         "base_url":                     Telegram.BASE_URL,
         "upstream_repo":                Telegram.UPSTREAM_REPO,
         "upstream_branch":              Telegram.UPSTREAM_BRANCH,
@@ -148,6 +150,10 @@ class Settings:
     @property
     def tmdb_api(self) -> str:
         return str(self._d.get("tmdb_api") or "")
+
+    @property
+    def tvdb_api(self) -> str:
+        return str(self._d.get("tvdb_api") or "").strip()
 
     @property
     def base_url(self) -> str:

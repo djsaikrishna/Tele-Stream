@@ -18,7 +18,7 @@ from Backend.fastapi.security.tokens import verify_token
 from Backend.fastapi.themes import DEFAULT_THEME, get_theme
 from Backend.helper.fanart import fanart_artwork
 from Backend.helper.global_search import global_search, is_global_search_enabled
-from Backend.helper.imdb import get_detail, get_season
+from Backend.helper.metadata.providers.cinemeta import get_detail, get_season
 from Backend.helper.metadata import resolve_cover_url, COMBINED_SEASON, COMBINED_EPISODE_BASE
 from Backend.helper.split_files import parse_combined_episodes, combined_name_key
 from Backend.helper.settings_manager import SettingsManager
