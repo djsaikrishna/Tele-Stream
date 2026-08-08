@@ -19,6 +19,7 @@ from Backend.fastapi.themes import DEFAULT_THEME, get_theme
 from Backend.helper.fanart import fanart_artwork
 from Backend.helper.global_search import global_search, is_global_search_enabled
 from Backend.helper.metadata.providers.cinemeta import get_detail, get_season
+from Backend.helper.metadata.providers.kitsu import resolve_absolute_episode
 from Backend.helper.metadata import resolve_cover_url, COMBINED_SEASON, COMBINED_EPISODE_BASE
 from Backend.helper.split_files import parse_combined_episodes, combined_name_key
 from Backend.helper.settings_manager import SettingsManager
@@ -185,7 +186,6 @@ def _year_label(item: dict) -> str:
     end = item.get("release_year_end")
     if not start:
         return ""
-    # Tolerate accidental "2019-2024" stored in release_year
     if isinstance(start, str) and "-" in start.strip():
         parts = start.strip().split("-", 1)
         try:
@@ -211,7 +211,6 @@ def _year_label(item: dict) -> str:
 
 #----- Map an internal media item into a Stremio meta object
 def _english_title(item: dict) -> str:
-    """English title when present, otherwise canonical title. Used only for meta detail."""
     eng = (item.get("title_english") or "").strip()
     title = (item.get("title") or "").strip()
     if eng:
@@ -220,12 +219,10 @@ def _english_title(item: dict) -> str:
 
 
 def _catalog_title(item: dict) -> str:
-    """Catalog / search listing title — keep the stored primary title as-is."""
     return (item.get("title") or "").strip() or "Unknown"
 
 
 def _safe_moviedb_id(item: dict):
-    """Omit null; return int when possible (never the string 'null')."""
     v = item.get("tmdb_id")
     if v is None or str(v).strip().lower() in ("", "null", "none"):
         return None
@@ -236,12 +233,10 @@ def _safe_moviedb_id(item: dict):
 
 
 def _single_year(item: dict):
-    """Stremio `year` must be a single year (number or numeric string), never a range."""
     start = item.get("release_year")
     if start in (None, ""):
         return None
     try:
-        # tolerate accidental "2019-2024" stored in release_year
         s = str(start).strip()
         if "-" in s:
             s = s.split("-", 1)[0].strip()
@@ -251,7 +246,6 @@ def _single_year(item: dict):
 
 
 def convert_to_stremio_meta(item: dict) -> dict:
-    """Catalog card — primary title unchanged; year is a single value."""
     media_type = "series" if item.get("media_type") == "tv" else "movie"
     imdb = item.get("imdb_id") or ""
     year = _single_year(item)
@@ -276,7 +270,6 @@ def convert_to_stremio_meta(item: dict) -> dict:
     rating = item.get("rating")
     if rating not in (None, ""):
         try:
-            # clamp absurd values (legacy TVDB popularity bleed)
             r = float(rating)
             if 0 < r <= 10:
                 meta["imdbRating"] = str(round(r, 1))
@@ -371,7 +364,7 @@ def stream_res_label(stream_name: str) -> str:
 @router.get("/{token}/manifest.json")
 async def get_manifest(token: str, token_data: dict = Depends(verify_token)):
     if SettingsManager.current().hide_catalog:
-        resources = ["stream", "subtitles"]
+        resources = ["meta", "stream", "subtitles"]
         catalogs = []
     else:
         resources = ["catalog", "meta", "stream", "subtitles"]
@@ -605,10 +598,6 @@ async def get_catalog(token: str, media_type: str, id: str, extra: Optional[str]
 #----- Detailed metadata for a title, including series episode list
 @router.get("/{token}/meta/{media_type}/{id}.json")
 async def get_meta(token: str, media_type: str, id: str, token_data: dict = Depends(verify_token)):
-    if SettingsManager.current().hide_catalog:
-        raise HTTPException(status_code=404, detail="Catalog disabled")
-
-    # Strip any accidental episode suffix (tt123:1:2) — meta is title-level only
     imdb_id = (id or "").split(":")[0].strip()
     if not imdb_id:
         return {"meta": {}}
@@ -622,16 +611,28 @@ async def get_meta(token: str, media_type: str, id: str, token_data: dict = Depe
     if not media:
         return {"meta": {}}
 
-    if not _token_can_view(media.get("visibility") or "public", media.get("allowed_tokens") or [], token_data):
+    try:
+        if not _token_can_view(
+            media.get("visibility") or "public",
+            media.get("allowed_tokens") or [],
+            token_data,
+        ):
+            return {"meta": {}}
+    except Exception:
         return {"meta": {}}
 
+    stremio_type = "series" if media_type == "series" else "movie"
+
+    eng = (media.get("title_english") or "").strip()
+    primary = (media.get("title") or "").strip()
+    name = eng or primary or "Unknown"
+
     year = _single_year(media)
-    # Prefer English title on the detail page only (catalog keeps primary title)
-    name = _english_title(media)
+    release = _year_label(media)
 
     meta_obj = {
         "id": imdb_id,
-        "type": "series" if (media.get("media_type") == "tv" or media_type == "series") else "movie",
+        "type": stremio_type,
         "name": name,
         "description": media.get("description") or "",
         "genres": media.get("genres") or [],
@@ -644,9 +645,9 @@ async def get_meta(token: str, media_type: str, id: str, token_data: dict = Depe
     }
     if year is not None:
         meta_obj["year"] = year
-    release = _year_label(media)
     if release:
         meta_obj["releaseInfo"] = release
+
     rating = media.get("rating")
     if rating not in (None, ""):
         try:
@@ -655,6 +656,7 @@ async def get_meta(token: str, media_type: str, id: str, token_data: dict = Depe
                 meta_obj["imdbRating"] = str(round(r, 1))
         except (TypeError, ValueError):
             pass
+
     mid = _safe_moviedb_id(media)
     if mid is not None:
         meta_obj["moviedb_id"] = mid
@@ -664,66 +666,65 @@ async def get_meta(token: str, media_type: str, id: str, token_data: dict = Depe
     except Exception as e:
         LOGGER.warning(f"[META] fanart failed for {imdb_id}: {e}")
 
-    is_series = meta_obj["type"] == "series"
-
-    if not is_series:
-        released_date = format_released_date(media)
-        if released_date:
-            meta_obj["released"] = released_date
+    if stremio_type == "movie":
+        try:
+            released_date = format_released_date(media)
+            if released_date:
+                meta_obj["released"] = released_date
+        except Exception:
+            pass
         return {"meta": meta_obj}
 
-    # ----- Series: always attach a videos list (required for Stremio to open the title)
     yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
     videos = []
     seasons = media.get("seasons") or []
+    if not isinstance(seasons, list):
+        seasons = []
 
-    def _snum(s):
+    def _as_int(val, default=0):
         try:
-            v = s.get("season_number")
-            if v is None or str(v).lower() in ("", "null", "none"):
-                return 0
-            return int(v)
+            if val is None or str(val).strip().lower() in ("", "null", "none"):
+                return default
+            return int(val)
         except (TypeError, ValueError):
-            return 0
-
-    def _enum(e):
-        try:
-            v = e.get("episode_number")
-            if v is None or str(v).lower() in ("", "null", "none"):
-                return 0
-            return int(v)
-        except (TypeError, ValueError):
-            return 0
+            return default
 
     try:
-        for season in sorted(seasons, key=_snum):
-            s_num = _snum(season)
+        seasons_sorted = sorted(seasons, key=lambda s: _as_int((s or {}).get("season_number"), 0))
+        for season in seasons_sorted:
+            if not isinstance(season, dict):
+                continue
+            s_num = _as_int(season.get("season_number"), 0)
             episodes = season.get("episodes") or []
             if not isinstance(episodes, list):
                 continue
-            for episode in sorted(episodes, key=_enum):
+            episodes_sorted = sorted(episodes, key=lambda e: _as_int((e or {}).get("episode_number"), 0))
+            for episode in episodes_sorted:
                 if not isinstance(episode, dict):
                     continue
-                e_num = _enum(episode)
-                ep_title = (
-                    (episode.get("title") or "").strip()
-                    or (episode.get("episode_title") or "").strip()
+                e_num = _as_int(episode.get("episode_number"), 0)
+                title = (
+                    str(episode.get("title") or "").strip()
+                    or str(episode.get("episode_title") or "").strip()
                     or (f"Season {s_num} Combined" if s_num == 0 else f"Episode {e_num}")
                 )
-                # Ensure released is a usable ISO-ish string
                 released = episode.get("released") or episode.get("episode_released") or yesterday
-                if not isinstance(released, str) or not released.strip():
+                if not isinstance(released, str):
+                    try:
+                        released = released.isoformat()  # datetime
+                    except Exception:
+                        released = yesterday
+                if not released.strip():
                     released = yesterday
-                thumb = (
-                    _abs_media_url(episode.get("episode_backdrop") or episode.get("thumbnail"))
-                    or "https://raw.githubusercontent.com/weebzone/Colab-Tools/refs/heads/main/no_episode_backdrop.png"
-                )
+                thumb = _abs_media_url(
+                    episode.get("episode_backdrop") or episode.get("thumbnail")
+                ) or "https://raw.githubusercontent.com/weebzone/Colab-Tools/refs/heads/main/no_episode_backdrop.png"
                 videos.append({
                     "id": f"{imdb_id}:{s_num}:{e_num}",
-                    "title": ep_title,
+                    "title": title,
                     "season": s_num,
                     "episode": e_num,
-                    "overview": (
+                    "overview": str(
                         episode.get("overview")
                         or episode.get("episode_overview")
                         or "No description available for this episode yet."
@@ -732,15 +733,12 @@ async def get_meta(token: str, media_type: str, id: str, token_data: dict = Depe
                     "thumbnail": thumb,
                 })
     except Exception as e:
-        LOGGER.error(f"[META] failed building videos for {imdb_id}: {e}")
+        LOGGER.error(f"[META] videos build failed for {imdb_id}: {e}", exc_info=True)
         videos = []
 
     meta_obj["videos"] = videos
     if not videos:
-        LOGGER.warning(
-            f"[META] series {imdb_id} has no episode rows "
-            f"(seasons={len(seasons)}); Stremio may show limited info"
-        )
+        LOGGER.warning(f"[META] series {imdb_id} has no episodes (seasons={len(seasons)})")
     return {"meta": meta_obj}
 
 
@@ -778,18 +776,49 @@ async def _global_streams_for(token: str, imdb_id: str, media_type: str, season_
             await get_season(imdb_id=imdb_id, season_id=season_num, episode_id=episode_num)
         except Exception:
             pass
+    attempts = [
+        {"season": season_num, "episode": episode_num, "allow_absolute": False},
+    ]
+    if (
+        media_type == "series"
+        and season_num is not None
+        and episode_num is not None
+    ):
+        try:
+            abs_ep = await resolve_absolute_episode(
+                expected_title, season_num, episode_num, year=year
+            )
+        except Exception as e:
+            LOGGER.warning(f"[GLOBAL SEARCH] Kitsu absolute resolve failed for '{expected_title}': {e}")
+            abs_ep = None
+        if abs_ep is not None:
+            LOGGER.info(
+                f"[GLOBAL SEARCH] Anime detected via Kitsu — also searching absolute E{abs_ep} "
+                f"for '{expected_title}' S{season_num:02d}E{episode_num:02d}"
+            )
+            attempts.append({"season": None, "episode": abs_ep, "allow_absolute": True})
 
-    try:
-        global_results = await global_search(
-            expected_title,
-            SettingsManager.current().auth_channels,
-            year=year,
-            season=season_num,
-            episode=episode_num,
-        )
-    except Exception as e:
-        LOGGER.error(f"[GLOBAL SEARCH] search failed for '{expected_title}': {e}")
-        return []
+    global_results = []
+    seen_tokens = set()
+    for a in attempts:
+        try:
+            batch = await global_search(
+                expected_title,
+                SettingsManager.current().auth_channels,
+                year=year,
+                season=a["season"],
+                episode=a["episode"],
+                allow_absolute=a["allow_absolute"],
+            )
+        except Exception as e:
+            LOGGER.error(f"[GLOBAL SEARCH] search failed for '{expected_title}': {e}")
+            batch = []
+        for r in batch or []:
+            tok = r.get("token") or r.get("title")
+            if tok in seen_tokens:
+                continue
+            seen_tokens.add(tok)
+            global_results.append(r)
 
     streams = []
     for r in global_results:
@@ -806,7 +835,6 @@ async def _global_streams_for(token: str, imdb_id: str, media_type: str, season_
     return streams
 
 
-#----- Cached check that a user is still in the subscription group (fail-open)
 async def _is_subscription_member(user_id: int) -> bool:
     group_id = SettingsManager.current().subscription_group_id
     if not group_id:

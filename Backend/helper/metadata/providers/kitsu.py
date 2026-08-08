@@ -211,7 +211,6 @@ def _common_payload(row: dict, doc: dict, title: str) -> dict:
     year, year_end = parse_year_range(attrs.get("startDate"), attrs.get("endDate"))
     duration = attrs.get("episodeLength")
     imdb_id = mappings.get("imdb_id")
-    # Prefer English display title; keep original/romaji separately for search
     english = titles.get("en") or titles.get("en_us") or titles.get("en_jp") or ""
     original = (
         attrs.get("canonicalTitle")
@@ -335,6 +334,61 @@ def _resolve_episode_slot(doc: dict, season, episode, absolute: bool) -> tuple:
     return use_season, use_episode, ep, False
 
 
+
+async def resolve_absolute_episode(
+    title: str,
+    season: int,
+    episode: int,
+    year=None,
+) -> Optional[int]:
+    if not title or season is None or episode is None:
+        return None
+    try:
+        season_i, episode_i = int(season), int(episode)
+    except (TypeError, ValueError):
+        return None
+
+    row = await search_anime(title, season=season_i, movie=False)
+    if not row:
+        row = await search_anime(title, season=None, movie=False)
+    if not row:
+        return None
+
+    try:
+        kitsu_id = int(row["id"])
+    except (TypeError, ValueError, KeyError):
+        return None
+
+    doc = await get_anizip_mappings(kitsu_id) or {}
+    episodes = doc.get("episodes") or {}
+    if not episodes:
+        return None
+
+    ep = _find_anizip_episode(episodes, season_i, episode_i, absolute=False)
+    if not ep:
+        return None
+
+    abs_val = ep.get("absoluteEpisodeNumber")
+    if abs_val in (None, ""):
+        for key, candidate in episodes.items():
+            try:
+                if (
+                    int(candidate.get("seasonNumber") or -1) == season_i
+                    and int(candidate.get("episodeNumber") or candidate.get("episode") or -1) == episode_i
+                ):
+                    abs_val = candidate.get("absoluteEpisodeNumber") or key
+                    break
+            except (TypeError, ValueError):
+                continue
+    try:
+        abs_i = int(abs_val)
+        if abs_i > 0:
+            return abs_i
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
 async def fetch_anime_tv(
     title,
     season,
@@ -379,7 +433,13 @@ async def fetch_anime_tv(
         "episode_released": ep.get("airDate") or ep.get("airdate") or "",
         "quality": quality,
         "encoded_string": encoded_string,
-        "absolute_episode": episode_number if is_abs else None,
+        "absolute_episode": (
+            int(episode) if is_abs else (
+                int(ep["absoluteEpisodeNumber"])
+                if ep and ep.get("absoluteEpisodeNumber") not in (None, "")
+                else None
+            )
+        ),
     })
     return payload
 
