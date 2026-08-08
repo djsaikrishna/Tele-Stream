@@ -211,7 +211,6 @@ def _common_payload(row: dict, doc: dict, title: str) -> dict:
     year, year_end = parse_year_range(attrs.get("startDate"), attrs.get("endDate"))
     duration = attrs.get("episodeLength")
     imdb_id = mappings.get("imdb_id")
-    # Prefer English display title; keep original/romaji separately for search
     english = titles.get("en") or titles.get("en_us") or titles.get("en_jp") or ""
     original = (
         attrs.get("canonicalTitle")
@@ -379,7 +378,13 @@ async def fetch_anime_tv(
         "episode_released": ep.get("airDate") or ep.get("airdate") or "",
         "quality": quality,
         "encoded_string": encoded_string,
-        "absolute_episode": episode_number if is_abs else None,
+        "absolute_episode": (
+            int(episode) if is_abs else (
+                int(ep["absoluteEpisodeNumber"])
+                if ep and ep.get("absoluteEpisodeNumber") not in (None, "")
+                else None
+            )
+        ),
     })
     return payload
 
