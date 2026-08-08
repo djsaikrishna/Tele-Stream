@@ -7,6 +7,7 @@ from typing import Optional
 import Backend
 from Backend.helper.encrypt import encode_string
 from Backend.helper.metadata.common import (
+    ensure_media_ids,
     COMBINED_EPISODE_BASE,
     COMBINED_SEASON,
     extract_default_id,
@@ -186,6 +187,8 @@ async def metadata(
                 result["is_anime"] = True
             result["group_key"] = group_key
             result["part_number"] = part_number
+        if result:
+            ensure_media_ids(result, seed=str(result.get("title") or ""))
         return result
     except Exception as e:
         LOGGER.error(f"Error while fetching metadata for {filename}: {e}\n{traceback.format_exc()}")

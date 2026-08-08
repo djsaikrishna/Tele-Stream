@@ -7,6 +7,7 @@ from themoviedb import aioTMDb
 
 from Backend.config import Telegram
 from Backend.helper.metadata.common import (
+    ensure_media_ids,
     logo_from_imdb,
     parse_year_range,
     ALT_TITLE_LOOKUPS,
@@ -234,10 +235,15 @@ async def external_imdb_id(media_type: str, tmdb_id) -> str | None:
 
 def build_movie_payload(movie, quality, encoded_string) -> dict:
     release = getattr(movie, "release_date", None)
-    return {
+    title = movie.title or getattr(movie, "original_title", "") or ""
+    eng = title
+    orig = getattr(movie, "original_title", None) or title
+    payload = {
         "tmdb_id": movie.id,
         "imdb_id": getattr(getattr(movie, "external_ids", None), "imdb_id", None),
-        "title": movie.title,
+        "title": title,
+        "title_english": eng,
+        "original_title": orig if orig != title else "",
         "year": getattr(release, "year", 0) if release else 0,
         "rate": getattr(movie, "vote_average", 0) or 0,
         "description": movie.overview or "",
@@ -255,6 +261,7 @@ def build_movie_payload(movie, quality, encoded_string) -> dict:
         "quality": quality,
         "encoded_string": encoded_string,
     }
+    return ensure_media_ids(payload, seed=f"tmdb:movie:{movie.id}")
 
 
 def build_tv_payload(tv, ep, season, episode, quality, encoded_string) -> dict:
@@ -267,10 +274,14 @@ def build_tv_payload(tv, ep, season, episode, quality, encoded_string) -> dict:
     series_runtime = tv.episode_run_time[0] if getattr(tv, "episode_run_time", None) else None
     runtime = format_runtime((getattr(ep, "runtime", None) if ep else None) or series_runtime)
     fallback_ep_title = f"S{season:02d}E{episode:02d}"
-    return {
+    title = tv.name or getattr(tv, "original_name", "") or ""
+    orig = getattr(tv, "original_name", None) or title
+    payload = {
         "tmdb_id": tv.id,
         "imdb_id": getattr(getattr(tv, "external_ids", None), "imdb_id", None),
-        "title": tv.name,
+        "title": title,
+        "title_english": title,
+        "original_title": orig if orig != title else "",
         "year": year,
         "year_end": year_end,
         "rate": getattr(tv, "vote_average", 0) or 0,
@@ -299,3 +310,4 @@ def build_tv_payload(tv, ep, season, episode, quality, encoded_string) -> dict:
         "quality": quality,
         "encoded_string": encoded_string,
     }
+    return ensure_media_ids(payload, seed=f"tmdb:tv:{tv.id}")

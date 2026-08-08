@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from Backend.helper.metadata.common import (
+    ensure_media_ids,
     API_SEMAPHORE,
     STRONG_MATCH,
     TVDB_CACHE,
@@ -330,10 +331,21 @@ def build_series_payload(
     ep_image = _art_url((ep or {}).get("image") or "")
     ep_overview = (ep or {}).get("overview") or ""
     ep_aired = (ep or {}).get("aired") or (ep or {}).get("firstAired") or ""
-    return {
+    title = series.get("name") or series.get("slug") or ""
+    # Prefer English translation when available
+    eng = None
+    try:
+        for tr in (series.get("translations") or {}).get("nameTranslations") or []:
+            if isinstance(tr, dict) and (tr.get("language") or "").lower() in ("eng", "en"):
+                eng = tr.get("name") or eng
+    except Exception:
+        pass
+    payload = {
         "tmdb_id": tmdb_id,
         "imdb_id": imdb_id,
-        "title": series.get("name") or series.get("slug") or "",
+        "title": title,
+        "title_english": eng or title,
+        "original_title": series.get("name") or "",
         "year": year,
         "year_end": year_end,
         "rate": rate,
@@ -357,6 +369,7 @@ def build_series_payload(
         "encoded_string": encoded_string,
         "tvdb_id": series.get("id"),
     }
+    return ensure_media_ids(payload, seed=f"tvdb:{series.get('id')}")
 
 
 def build_movie_payload(movie: dict, quality, encoded_string) -> dict:
@@ -372,10 +385,13 @@ def build_movie_payload(movie: dict, quality, encoded_string) -> dict:
         or (movie.get("score") if (movie.get("score") or 0) <= 10 else 0)
     )
     runtime = movie.get("runtime")
-    return {
+    title = movie.get("name") or movie.get("slug") or ""
+    payload = {
         "tmdb_id": tmdb_id,
         "imdb_id": imdb_id,
-        "title": movie.get("name") or movie.get("slug") or "",
+        "title": title,
+        "title_english": title,
+        "original_title": movie.get("name") or "",
         "year": year,
         "year_end": year_end,
         "rate": rate,
@@ -391,6 +407,7 @@ def build_movie_payload(movie: dict, quality, encoded_string) -> dict:
         "encoded_string": encoded_string,
         "tvdb_id": movie.get("id"),
     }
+    return ensure_media_ids(payload, seed=f"tvdb:{movie.get('id')}")
 
 
 async def fetch_series_metadata(title, season, episode, encoded_string, year=None, quality=None) -> Optional[dict]:

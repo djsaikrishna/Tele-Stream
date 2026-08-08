@@ -9,6 +9,7 @@ import httpx
 from rapidfuzz import fuzz
 
 from Backend.helper.metadata.common import (
+    ensure_media_ids,
     KITSU_CACHE,
     KITSU_THRESHOLD,
     cached_call,
@@ -220,7 +221,7 @@ def _common_payload(row: dict, doc: dict, title: str) -> dict:
     )
     display = english or original or title
     logo = _anizip_image(images, "Clearlogo") or logo_from_imdb(imdb_id)
-    return {
+    payload = {
         "tmdb_id": tmdb_id,
         "imdb_id": imdb_id,
         "title": display,
@@ -238,6 +239,7 @@ def _common_payload(row: dict, doc: dict, title: str) -> dict:
         "runtime": f"{duration} min" if duration else "",
         "kitsu_id": row.get("id"),
     }
+    return ensure_media_ids(payload, seed=f"kitsu:{row.get('id')}")
 
 
 def _episode_title(ep: dict, season: int, episode: int, absolute: bool = False) -> str:

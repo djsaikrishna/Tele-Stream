@@ -200,22 +200,42 @@ def _year_label(item: dict) -> str:
 
 
 #----- Map an internal media item into a Stremio meta object
+def _display_title(item: dict) -> str:
+    """Prefer English title when available, else canonical title."""
+    eng = (item.get("title_english") or "").strip()
+    title = (item.get("title") or "").strip()
+    if eng and eng.lower() != title.lower():
+        return eng
+    return eng or title or "Unknown"
+
+
+def _safe_moviedb_id(item: dict):
+    """Never emit null/None for moviedb_id (breaks some Stremio clients)."""
+    v = item.get("tmdb_id")
+    if v is None or str(v).strip().lower() in ("", "null", "none"):
+        return ""
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return str(v)
+
+
 def convert_to_stremio_meta(item: dict) -> dict:
     media_type = "series" if item.get("media_type") == "tv" else "movie"
-
+    imdb = item.get("imdb_id") or ""
     meta = {
-        "id": item.get('imdb_id'),
+        "id": imdb,
         "type": media_type,
-        "name": item.get("title"),
-        "poster": _poster_url(item.get("imdb_id"), item.get("poster")),
+        "name": _display_title(item),
+        "poster": _poster_url(imdb, item.get("poster")),
         "logo": item.get("logo") or "",
-        "year": _year_label(item) or item.get("release_year"),
-        "releaseInfo": _year_label(item),
-        "imdb_id": item.get("imdb_id", ""),
-        "moviedb_id": item.get("tmdb_id", ""),
+        "year": _year_label(item) or item.get("release_year") or "",
+        "releaseInfo": _year_label(item) or "",
+        "imdb_id": imdb,
+        "moviedb_id": _safe_moviedb_id(item),
         "background": _abs_media_url(item.get("backdrop")),
         "genres": item.get("genres") or [],
-        "imdbRating": str(item.get("rating") or ""),
+        "imdbRating": str(item.get("rating") or "") if item.get("rating") not in (None, "") else "",
         "description": item.get("description") or "",
         "cast": item.get("cast") or [],
         "runtime": item.get("runtime") or "",
@@ -555,17 +575,17 @@ async def get_meta(token: str, media_type: str, id: str, token_data: dict = Depe
     meta_obj = {
         "id": id,
         "type": "series" if media.get("media_type") == "tv" else "movie",
-        "name": media.get("title", ""),
-        "description": media.get("description", ""),
-        "year": _year_label(media) or str(media.get("release_year", "")),
-        "imdbRating": str(media.get("rating", "")),
-        "genres": media.get("genres", []),
+        "name": _display_title(media),
+        "description": media.get("description") or "",
+        "year": _year_label(media) or (str(media.get("release_year")) if media.get("release_year") else ""),
+        "imdbRating": str(media.get("rating") or "") if media.get("rating") not in (None, "") else "",
+        "genres": media.get("genres") or [],
         "poster": _poster_url(media.get("imdb_id") or imdb_id, media.get("poster")),
-        "logo": media.get("logo", ""),
+        "logo": media.get("logo") or "",
         "background": _abs_media_url(media.get("backdrop")),
-        "imdb_id": media.get("imdb_id", ""),
-        "releaseInfo": _year_label(media),
-        "moviedb_id": media.get("tmdb_id", ""),
+        "imdb_id": media.get("imdb_id") or id,
+        "releaseInfo": _year_label(media) or "",
+        "moviedb_id": _safe_moviedb_id(media),
         "cast": media.get("cast") or [],
         "runtime": media.get("runtime") or "",
     }
@@ -577,24 +597,59 @@ async def get_meta(token: str, media_type: str, id: str, token_data: dict = Depe
         if released_date:
             meta_obj["released"] = released_date
 
-    #----- Series episodes
-    if media_type == "series" and "seasons" in media:
+    #----- Series episodes (including combined-range season 0)
+    if media_type == "series":
         yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
         videos = []
-        for season in sorted(media.get("seasons", []), key=lambda s: s.get("season_number")):
-            for episode in sorted(season.get("episodes", []), key=lambda e: e.get("episode_number")):
-                episode_id = f"{id}:{season['season_number']}:{episode['episode_number']}"
+        seasons = media.get("seasons") or []
+
+        def _snum(s):
+            try:
+                return int(s.get("season_number"))
+            except (TypeError, ValueError):
+                return 0
+
+        def _enum(e):
+            try:
+                return int(e.get("episode_number"))
+            except (TypeError, ValueError):
+                return 0
+
+        for season in sorted(seasons, key=_snum):
+            s_num = _snum(season)
+            episodes = season.get("episodes") or []
+            for episode in sorted(episodes, key=_enum):
+                e_num = _enum(episode)
+                # Skip completely empty stubs
+                if not episodes:
+                    continue
+                episode_id = f"{id}:{s_num}:{e_num}"
+                ep_title = (
+                    episode.get("title")
+                    or episode.get("episode_title")
+                    or (f"E{e_num:02d}" if s_num != 0 else f"Combined {e_num}")
+                )
                 videos.append({
                     "id": episode_id,
-                    "title": episode.get("title", f"Episode {episode['episode_number']}"),
-                    "season": season.get("season_number"),
-                    "episode": episode.get("episode_number"),
-                    "overview": episode.get("overview") or "No description available for this episode yet.",
-                    "released": episode.get("released") or yesterday,
-                    "thumbnail": _abs_media_url(episode.get("episode_backdrop")) or "https://raw.githubusercontent.com/weebzone/Colab-Tools/refs/heads/main/no_episode_backdrop.png",
-                    "imdb_id": episode.get("imdb_id") or media.get("imdb_id"),
+                    "title": ep_title,
+                    "season": s_num,
+                    "episode": e_num,
+                    "overview": (
+                        episode.get("overview")
+                        or episode.get("episode_overview")
+                        or "No description available for this episode yet."
+                    ),
+                    "released": episode.get("released") or episode.get("episode_released") or yesterday,
+                    "thumbnail": _abs_media_url(
+                        episode.get("episode_backdrop") or episode.get("thumbnail")
+                    ) or "https://raw.githubusercontent.com/weebzone/Colab-Tools/refs/heads/main/no_episode_backdrop.png",
+                    "imdb_id": episode.get("imdb_id") or media.get("imdb_id") or id,
                 })
         meta_obj["videos"] = videos
+        # Stremio shows "metadata not available" when a series has zero videos —
+        # keep an empty list rather than omitting the key so clients can still open the title.
+        if not videos:
+            LOGGER.warning(f"[META] series {id} has no episode entries in DB")
     return {"meta": meta_obj}
 
 
@@ -760,8 +815,14 @@ async def get_streams(
     try:
         parts = id.split(":")
         imdb_id = parts[0]
-        season_num = int(parts[1]) if len(parts) > 1 else None
-        episode_num = int(parts[2]) if len(parts) > 2 else None
+        try:
+            season_num = int(parts[1]) if len(parts) > 1 and parts[1] not in ("", "null", "None") else None
+        except (TypeError, ValueError):
+            season_num = None
+        try:
+            episode_num = int(parts[2]) if len(parts) > 2 and parts[2] not in ("", "null", "None") else None
+        except (TypeError, ValueError):
+            episode_num = None
     except (ValueError, IndexError):
         raise HTTPException(status_code=400, detail="Invalid Stremio ID format")
 

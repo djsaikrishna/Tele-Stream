@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from Backend.helper.metadata.common import (
+    ensure_media_ids,
     CINEMETA_THRESHOLD,
     IMDB_CACHE,
     STRONG_MATCH,
@@ -227,10 +228,12 @@ async def cached_season(imdb_id: str, season, episode):
 
 def build_movie_payload(imdb: dict, imdb_id: str, title: str, quality, encoded_string) -> dict:
     images = format_imdb_images(imdb_id)
-    return {
+    display = imdb.get("title", title) or title or ""
+    payload = {
         "tmdb_id": imdb.get("moviedb_id") or (imdb_id.replace("tt", "") if imdb_id else None),
         "imdb_id": imdb_id,
-        "title": imdb.get("title", title),
+        "title": display,
+        "title_english": display,
         "year": imdb.get("releaseDetailed", {}).get("year", 0),
         "rate": imdb.get("rating", {}).get("star", 0),
         "description": imdb.get("plot", ""),
@@ -244,14 +247,17 @@ def build_movie_payload(imdb: dict, imdb_id: str, title: str, quality, encoded_s
         "quality": quality,
         "encoded_string": encoded_string,
     }
+    return ensure_media_ids(payload, seed=f"cinemeta:{imdb_id}")
 
 
 def build_tv_payload(imdb, ep, imdb_id, title, season, episode, quality, encoded_string) -> dict:
     images = format_imdb_images(imdb_id)
-    return {
+    display = imdb.get("title", title) or title or ""
+    payload = {
         "tmdb_id": imdb.get("moviedb_id") or (imdb_id.replace("tt", "") if imdb_id else None),
         "imdb_id": imdb_id,
-        "title": imdb.get("title", title),
+        "title": display,
+        "title_english": display,
         "year": imdb.get("releaseDetailed", {}).get("year", 0),
         "rate": imdb.get("rating", {}).get("star", 0),
         "description": imdb.get("plot", ""),
@@ -271,3 +277,4 @@ def build_tv_payload(imdb, ep, imdb_id, title, season, episode, quality, encoded
         "quality": quality,
         "encoded_string": encoded_string,
     }
+    return ensure_media_ids(payload, seed=f"cinemeta:{imdb_id}")

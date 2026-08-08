@@ -319,6 +319,73 @@ def empty_payload_base() -> dict:
     }
 
 
+
+def ensure_media_ids(payload: dict, *, seed: str = "") -> dict:
+    """Guarantee usable integer tmdb_id and string imdb_id for DB / Stremio / admin UI.
+
+    - Real provider IDs are kept when present.
+    - Missing tmdb_id → negative synthetic id (same pattern as manual/custom titles).
+    - Missing imdb_id → ``tg{abs(tmdb_id)}`` so Stremio idPrefixes (tt|tg) still work.
+    """
+    if not isinstance(payload, dict):
+        return payload
+
+    tmdb = payload.get("tmdb_id")
+    try:
+        if tmdb is not None and str(tmdb).strip().lower() not in ("", "null", "none"):
+            tmdb = int(tmdb)
+        else:
+            tmdb = None
+    except (TypeError, ValueError):
+        tmdb = None
+
+    imdb = payload.get("imdb_id")
+    if imdb is not None:
+        imdb = str(imdb).strip()
+        if imdb.lower() in ("", "null", "none"):
+            imdb = None
+        elif imdb.isdigit():
+            imdb = f"tt{imdb}"
+    else:
+        imdb = None
+
+    if tmdb is None:
+        # Stable-ish synthetic id from available seeds so re-index merges
+        import hashlib
+        base = (
+            seed
+            or imdb
+            or str(payload.get("kitsu_id") or "")
+            or str(payload.get("tvdb_id") or "")
+            or str(payload.get("title") or "")
+            or "unknown"
+        )
+        digest = int(hashlib.md5(base.encode("utf-8")).hexdigest()[:8], 16)
+        tmdb = -(digest % 1_000_000_000 + 1)
+
+    if not imdb:
+        imdb = f"tg{abs(int(tmdb))}"
+
+    payload["tmdb_id"] = int(tmdb)
+    payload["imdb_id"] = imdb
+    return payload
+
+
+def coerce_int_id(value, default=None):
+    """Parse query/path tmdb_id that may arrive as 'null' / '' / None."""
+    if value is None:
+        return default
+    if isinstance(value, int):
+        return value
+    s = str(value).strip()
+    if not s or s.lower() in ("null", "none", "undefined"):
+        return default
+    try:
+        return int(float(s))  # tolerate "123.0"
+    except (TypeError, ValueError):
+        return default
+
+
 def logo_from_imdb(imdb_id: str | None) -> str:
     """Metahub clearlogo built from an IMDb id (used when providers lack logos)."""
     if not imdb_id:
