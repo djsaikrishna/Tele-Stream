@@ -1276,10 +1276,13 @@ class Database:
                 imdb_id=metadata_info['imdb_id'],
                 db_index=self.current_db_index,
                 title=metadata_info['title'],
+                title_english=metadata_info.get('title_english') or None,
+                original_title=metadata_info.get('original_title') or None,
                 genres=metadata_info['genres'],
                 description=metadata_info['description'],
                 rating=metadata_info['rate'],
-                release_year=metadata_info['year'],
+                release_year=metadata_info['year'] if isinstance(metadata_info.get('year'), int) else (int(str(metadata_info.get('year'))[:4]) if metadata_info.get('year') else None),
+                release_year_end=metadata_info.get('year_end') or None,
                 poster=metadata_info['poster'],
                 backdrop=metadata_info['backdrop'],
                 logo=metadata_info['logo'],
@@ -1298,10 +1301,13 @@ class Database:
                 imdb_id=metadata_info['imdb_id'],
                 db_index=self.current_db_index,
                 title=metadata_info['title'],
+                title_english=metadata_info.get('title_english') or None,
+                original_title=metadata_info.get('original_title') or None,
                 genres=metadata_info['genres'],
                 description=metadata_info['description'],
                 rating=metadata_info['rate'],
-                release_year=metadata_info['year'],
+                release_year=metadata_info['year'] if isinstance(metadata_info.get('year'), int) else (int(str(metadata_info.get('year'))[:4]) if metadata_info.get('year') else None),
+                release_year_end=metadata_info.get('year_end') or None,
                 poster=metadata_info['poster'],
                 backdrop=metadata_info['backdrop'],
                 logo=metadata_info['logo'],
@@ -1651,10 +1657,14 @@ class Database:
 
             tv_match = {"$or": [
                 {"title": regex_query},
+                {"title_english": regex_query},
+                {"original_title": regex_query},
                 {"seasons.episodes.telegram.name": regex_query}
             ]}
             movie_match = {"$or": [
                 {"title": regex_query},
+                {"title_english": regex_query},
+                {"original_title": regex_query},
                 {"telegram.name": regex_query}
             ]}
             if extra_filter:
@@ -1665,8 +1675,8 @@ class Database:
                 {"$match": tv_match},
                 {"$project": {
                     "_id": 1, "tmdb_id": 1, "title": 1, "genres": 1, "rating": 1, "imdb_id": 1,
-                    "release_year": 1, "poster": 1, "backdrop": 1, "description": 1, "logo": 1,
-                    "media_type": 1, "db_index": 1, "seasons": 1
+                    "release_year": 1, "release_year_end": 1, "poster": 1, "backdrop": 1, "description": 1, "logo": 1,
+                    "media_type": 1, "db_index": 1, "seasons": 1, "title_english": 1, "original_title": 1
                 }}
             ]
             
@@ -1674,8 +1684,8 @@ class Database:
                 {"$match": movie_match},
                 {"$project": {
                     "_id": 1, "tmdb_id": 1, "title": 1, "genres": 1, "rating": 1,
-                    "release_year": 1, "poster": 1, "backdrop": 1, "description": 1,
-                    "media_type": 1, "db_index": 1, "imdb_id": 1, "logo": 1, "telegram": 1
+                    "release_year": 1, "release_year_end": 1, "poster": 1, "backdrop": 1, "description": 1,
+                    "media_type": 1, "db_index": 1, "imdb_id": 1, "logo": 1, "telegram": 1, "title_english": 1, "original_title": 1
                 }}
             ]
             

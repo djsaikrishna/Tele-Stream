@@ -308,7 +308,7 @@
         <label class="s-label">AUTH_CHANNELS
             <span style="font-weight:400;text-transform:none;letter-spacing:0">
                 — users must be a member of at least one. Tick <strong>Anime</strong> on a
-                channel to index its files with AniList + api.ani.zip metadata.</span>
+                channel to index its files with Kitsu → TVDB → TMDB → Cinemeta priority.</span>
         </label>
         {% set anime_norm = settings.anime_channels | map('string') | map('replace', '-100', '') | list %}
         <div class="multi-list-items" id="auth_channels_items">
@@ -316,7 +316,7 @@
             {% set is_anime = (ch | string | replace('-100', '')) in anime_norm %}
             <div class="multi-item auth-item">
                 <input type="text" class="s-input" value="{{ ch }}" data-list="auth_channels">
-                <label class="anime-check {% if is_anime %}is-anime{% endif %}" title="Mark as anime channel — uses AniList/ani.zip metadata">
+                <label class="anime-check {% if is_anime %}is-anime{% endif %}" title="Mark as anime channel — uses Kitsu → TVDB → TMDB → Cinemeta">
                     <input type="checkbox" class="anime-toggle" {% if is_anime %}checked{% endif %} onchange="syncAnimeChip(this)">
                     <span>Anime</span>
                 </label>
@@ -343,6 +343,12 @@
                 <input type="text" id="tmdb_api" class="s-input"
                     value="{{ settings.tmdb_api }}" autocomplete="off"
                     placeholder="Your TMDB v3 API key" spellcheck="false">
+            </div>
+            <div>
+                <label class="s-label" for="tvdb_api">TVDB API Key</label>
+                <input type="text" id="tvdb_api" class="s-input"
+                    value="{{ settings.tvdb_api }}" autocomplete="off"
+                    placeholder="TheTVDB v4 API key (series priority)" spellcheck="false">
             </div>
             <div>
                 <label class="s-label" for="base_url">Base URL</label>
@@ -1228,7 +1234,7 @@ function generateSessionSecret() {
 function authRowHTML(value, isAnime) {
     return `
         <input type="text" class="s-input" value="${escapeHtmlAttr(value)}" data-list="auth_channels">
-        <label class="anime-check ${isAnime ? 'is-anime' : ''}" title="Mark as anime channel — uses AniList/ani.zip metadata">
+        <label class="anime-check ${isAnime ? 'is-anime' : ''}" title="Mark as anime channel — uses Kitsu → TVDB → TMDB → Cinemeta">
             <input type="checkbox" class="anime-toggle" ${isAnime ? 'checked' : ''} onchange="syncAnimeChip(this)">
             <span>Anime</span>
         </label>
@@ -1315,6 +1321,7 @@ async function saveSettings() {
         admin_password:                document.getElementById('admin_password').value,  // blank = keep
         session_secret:                document.getElementById('session_secret').value,  // blank = keep
         tmdb_api:                      document.getElementById('tmdb_api').value.trim(),
+        tvdb_api:                      (document.getElementById('tvdb_api') || {}).value?.trim() || '',
         base_url:                      document.getElementById('base_url').value.trim(),
         better_poster_enabled:         document.getElementById('better_poster_enabled').checked,
         better_poster:                 document.getElementById('better_poster').value.trim(),
@@ -1461,6 +1468,7 @@ function renderSettings(s) {
     document.getElementById('admin_username').value = s.admin_username || '';
     document.getElementById('admin_password').value = '';  // never re-fill password
     document.getElementById('tmdb_api').value = s.tmdb_api || '';
+    if (document.getElementById('tvdb_api')) document.getElementById('tvdb_api').value = s.tvdb_api || '';
     document.getElementById('base_url').value = s.base_url || '';
     document.getElementById('better_poster_enabled').checked = !!s.better_poster_enabled;
     document.getElementById('better_poster').value = s.better_poster || '';

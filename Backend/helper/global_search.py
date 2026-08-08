@@ -91,6 +91,18 @@ def _matches_episode(parsed: dict, season: Optional[int], episode: Optional[int]
     if not wants_episode and is_episode_like:
         return False
 
+    # Absolute / orphan: season is None, episode is set — match episode only
+    if season is None and episode is not None:
+        rv = parsed.get("episode")
+        if rv is None:
+            return True  # title-only parse still ok for absolute search hits
+        if isinstance(rv, list):
+            return int(episode) in [int(x) for x in rv]
+        try:
+            return int(rv) == int(episode)
+        except (TypeError, ValueError):
+            return False
+
     for value, parsed_key in ((season, "season"), (episode, "episode")):
         if value is None:
             continue
@@ -246,6 +258,9 @@ def _strip_symbols(text: str) -> str:
 def _build_search_query(expected_title: str, year: Optional[int], season: Optional[int], episode: Optional[int]) -> str:
     if season is not None and episode is not None:
         return f"{expected_title} S{int(season):02d}E{int(episode):02d}"
+    # Absolute / orphan episode (anime style: "One Piece 1223")
+    if season is None and episode is not None:
+        return f"{expected_title} {int(episode)}"
     if year is not None:
         return f"{expected_title} {year}"
     return expected_title
@@ -266,11 +281,19 @@ def _build_query_candidates(
     if season is None and episode is None and year is not None:
         add(expected_title)
 
+    # Absolute episode: also try E-prefix and bare title for broader hits
+    if season is None and episode is not None:
+        add(f"{expected_title} E{int(episode)}")
+        add(f"{expected_title} Episode {int(episode)}")
+
     stripped_title = _strip_symbols(expected_title)
     if stripped_title and stripped_title.lower() != expected_title.lower():
         add(_build_search_query(stripped_title, year, season, episode))
         if season is None and episode is None and year is not None:
             add(stripped_title)
+        if season is None and episode is not None:
+            add(f"{stripped_title} {int(episode)}")
+            add(f"{stripped_title} E{int(episode)}")
 
     return candidates
 
