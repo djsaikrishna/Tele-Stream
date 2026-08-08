@@ -8,7 +8,15 @@ from typing import List, Optional
 import httpx
 from rapidfuzz import fuzz
 
-from Backend.helper.metadata.common import KITSU_CACHE, KITSU_THRESHOLD, cached_call, strip_html
+from Backend.helper.metadata.common import (
+    KITSU_CACHE,
+    KITSU_THRESHOLD,
+    cached_call,
+    logo_from_imdb,
+    normalize_rating,
+    parse_year_range,
+    strip_html,
+)
 from Backend.logger import LOGGER
 
 KITSU_URL = "https://kitsu.io/api/edge"
@@ -188,34 +196,36 @@ def _common_payload(row: dict, doc: dict, title: str) -> dict:
 
     titles = attrs.get("titles") or {}
     images = (doc or {}).get("images") or []
-    rating = attrs.get("averageRating")
-    try:
-        rate = round(float(rating) / 10.0, 1) if rating else 0
-    except (TypeError, ValueError):
-        rate = 0
-    year = 0
-    if attrs.get("startDate"):
-        try:
-            year = int(str(attrs["startDate"])[:4])
-        except (TypeError, ValueError):
-            year = 0
+    rate = normalize_rating(
+        (float(attrs["averageRating"]) / 10.0) if attrs.get("averageRating") else 0
+    )
+    year, year_end = parse_year_range(attrs.get("startDate"), attrs.get("endDate"))
     duration = attrs.get("episodeLength")
+    imdb_id = mappings.get("imdb_id")
+    # Prefer English display title; keep original/romaji separately for search
+    english = titles.get("en") or titles.get("en_us") or titles.get("en_jp") or ""
+    original = (
+        attrs.get("canonicalTitle")
+        or titles.get("ja_jp")
+        or titles.get("en_jp")
+        or title
+    )
+    display = english or original or title
+    logo = _anizip_image(images, "Clearlogo") or logo_from_imdb(imdb_id)
     return {
         "tmdb_id": tmdb_id,
-        "imdb_id": mappings.get("imdb_id"),
-        "title": (
-            titles.get("en")
-            or attrs.get("canonicalTitle")
-            or titles.get("en_jp")
-            or title
-        ),
+        "imdb_id": imdb_id,
+        "title": display,
+        "title_english": english or display,
+        "original_title": original if original != display else "",
         "year": year,
+        "year_end": year_end,
         "rate": rate,
         "description": strip_html(attrs.get("synopsis") or attrs.get("description") or ""),
         "poster": _poster(attrs, images),
         "backdrop": _backdrop(attrs, images),
-        "logo": _anizip_image(images, "Clearlogo"),
-        "genres": [],  # filled below if available
+        "logo": logo,
+        "genres": [],
         "cast": [],
         "runtime": f"{duration} min" if duration else "",
         "kitsu_id": row.get("id"),
@@ -235,38 +245,84 @@ def _episode_title(ep: dict, season: int, episode: int, absolute: bool = False) 
     return f"S{int(season):02d}E{int(episode):02d}"
 
 
-def _resolve_episode_slot(doc: dict, season, episode, absolute: bool) -> tuple:
-    """Map (season, episode) or absolute episode to storage slot + ani.zip ep dict.
+def _find_anizip_episode(episodes: dict, season, episode, absolute: bool) -> dict:
+    """Locate the ani.zip episode entry for an absolute or S/E number."""
+    if not episodes:
+        return {}
+    ep_num = int(episode)
 
-    Absolute/orphan style (One Piece 1223):
-      - Lookup episodes[str(absolute)]
-      - Prefer ani.zip seasonNumber when present
-      - Store episode_number as the absolute number so streams stay addressable
-        as imdb:season:absolute (common for continuous anime).
-    """
-    episodes = (doc or {}).get("episodes") or {}
-    if absolute or season is None:
-        abs_ep = int(episode)
-        ep = episodes.get(str(abs_ep)) or {}
-        mapped_season = ep.get("seasonNumber") or ep.get("season")
+    # 1) Direct key match (most ani.zip catalogs key by absolute / sequential number)
+    if str(ep_num) in episodes:
+        return episodes[str(ep_num)] or {}
+
+    # 2) Match absoluteEpisodeNumber (TVDB absolute)
+    for candidate in episodes.values():
         try:
-            mapped_season = int(mapped_season) if mapped_season is not None else 1
+            if int(candidate.get("absoluteEpisodeNumber") or -1) == ep_num:
+                return candidate
         except (TypeError, ValueError):
-            mapped_season = 1
-        return mapped_season, abs_ep, ep, True
+            continue
 
-    ep = episodes.get(str(episode)) or {}
-    # Also try absolute key if season-relative key missing
-    if not ep:
-        # search by seasonNumber + relative episode field
-        for key, candidate in episodes.items():
+    # 3) Match episode / episodeNumber fields
+    for candidate in episodes.values():
+        try:
+            if int(candidate.get("episodeNumber") or candidate.get("episode") or -1) == ep_num:
+                if absolute or season is None:
+                    return candidate
+                if int(candidate.get("seasonNumber") or candidate.get("season") or -1) == int(season):
+                    return candidate
+        except (TypeError, ValueError):
+            continue
+
+    # 4) Season + relative episode when both known
+    if season is not None and not absolute:
+        for candidate in episodes.values():
             try:
-                if int(candidate.get("seasonNumber") or 0) == int(season) and str(candidate.get("episode")) == str(episode):
-                    ep = candidate
-                    break
+                if (
+                    int(candidate.get("seasonNumber") or -1) == int(season)
+                    and int(candidate.get("episodeNumber") or candidate.get("episode") or -1) == ep_num
+                ):
+                    return candidate
             except (TypeError, ValueError):
                 continue
-    return int(season), int(episode), ep, False
+    return {}
+
+
+def _resolve_episode_slot(doc: dict, season, episode, absolute: bool) -> tuple:
+    """Map (season, episode) or absolute episode to IMDb-style S/E via ani.zip.
+
+    ani.zip entries often carry:
+      - seasonNumber / episodeNumber  → aired-order IMDb/TVDB style slot
+      - absoluteEpisodeNumber         → continuous absolute number
+    Prefer the mapped seasonNumber+episodeNumber so Stremio arranges episodes
+    correctly even when the filename used absolute numbering.
+    """
+    episodes = (doc or {}).get("episodes") or {}
+    ep = _find_anizip_episode(episodes, season, episode, absolute)
+
+    mapped_season = ep.get("seasonNumber") if ep else None
+    mapped_ep = ep.get("episodeNumber") if ep else None
+    if mapped_ep is None and ep:
+        mapped_ep = ep.get("episode")
+
+    try:
+        mapped_season = int(mapped_season) if mapped_season is not None else None
+    except (TypeError, ValueError):
+        mapped_season = None
+    try:
+        mapped_ep = int(mapped_ep) if mapped_ep is not None else None
+    except (TypeError, ValueError):
+        mapped_ep = None
+
+    if absolute or season is None:
+        # Prefer provider-mapped S/E; fall back to S1 + absolute
+        use_season = mapped_season if mapped_season is not None else 1
+        use_episode = mapped_ep if mapped_ep is not None else int(episode)
+        return use_season, use_episode, ep, True
+
+    use_season = mapped_season if mapped_season is not None else int(season)
+    use_episode = mapped_ep if mapped_ep is not None else int(episode)
+    return use_season, use_episode, ep, False
 
 
 async def fetch_anime_tv(

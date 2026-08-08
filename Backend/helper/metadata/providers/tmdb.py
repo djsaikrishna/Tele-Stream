@@ -7,6 +7,8 @@ from themoviedb import aioTMDb
 
 from Backend.config import Telegram
 from Backend.helper.metadata.common import (
+    logo_from_imdb,
+    parse_year_range,
     ALT_TITLE_LOOKUPS,
     ALT_TITLES_CACHE,
     API_SEMAPHORE,
@@ -233,7 +235,9 @@ def build_movie_payload(movie, quality, encoded_string) -> dict:
         "description": movie.overview or "",
         "poster": format_tmdb_image(movie.poster_path),
         "backdrop": format_tmdb_image(movie.backdrop_path, "original"),
-        "logo": get_tmdb_logo(getattr(movie, "images", None)),
+        "logo": get_tmdb_logo(getattr(movie, "images", None)) or logo_from_imdb(
+            getattr(getattr(movie, "external_ids", None), "imdb_id", None)
+        ),
         "cast": _extract_cast(movie),
         "runtime": str(format_runtime(getattr(movie, "runtime", None))),
         "media_type": "movie",
@@ -247,6 +251,11 @@ def build_movie_payload(movie, quality, encoded_string) -> dict:
 
 def build_tv_payload(tv, ep, season, episode, quality, encoded_string) -> dict:
     first_air = getattr(tv, "first_air_date", None)
+    last_air = getattr(tv, "last_air_date", None)
+    year, year_end = parse_year_range(
+        getattr(first_air, "year", None) if first_air else None,
+        getattr(last_air, "year", None) if last_air else None,
+    )
     series_runtime = tv.episode_run_time[0] if getattr(tv, "episode_run_time", None) else None
     runtime = format_runtime((getattr(ep, "runtime", None) if ep else None) or series_runtime)
     fallback_ep_title = f"S{season:02d}E{episode:02d}"
@@ -254,12 +263,15 @@ def build_tv_payload(tv, ep, season, episode, quality, encoded_string) -> dict:
         "tmdb_id": tv.id,
         "imdb_id": getattr(getattr(tv, "external_ids", None), "imdb_id", None),
         "title": tv.name,
-        "year": getattr(first_air, "year", 0) if first_air else 0,
+        "year": year,
+        "year_end": year_end,
         "rate": getattr(tv, "vote_average", 0) or 0,
         "description": tv.overview or "",
         "poster": format_tmdb_image(tv.poster_path),
         "backdrop": format_tmdb_image(tv.backdrop_path, "original"),
-        "logo": get_tmdb_logo(getattr(tv, "images", None)),
+        "logo": get_tmdb_logo(getattr(tv, "images", None)) or logo_from_imdb(
+            getattr(getattr(tv, "external_ids", None), "imdb_id", None)
+        ),
         "genres": [g.name for g in (tv.genres or [])],
         "media_type": "tv",
         "cast": _extract_cast(tv),

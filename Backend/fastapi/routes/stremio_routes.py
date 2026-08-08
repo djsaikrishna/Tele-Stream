@@ -178,6 +178,27 @@ async def _apply_fanart(meta: dict, item: dict) -> None:
         meta["background"] = art["background"]
 
 
+
+def _year_label(item: dict) -> str:
+    """Single year or range for Stremio releaseInfo (e.g. 1999-2024)."""
+    start = item.get("release_year")
+    end = item.get("release_year_end")
+    if not start:
+        return ""
+    try:
+        start_i = int(start)
+    except (TypeError, ValueError):
+        return str(start)
+    if end:
+        try:
+            end_i = int(end)
+            if end_i > start_i:
+                return f"{start_i}-{end_i}"
+        except (TypeError, ValueError):
+            pass
+    return str(start_i)
+
+
 #----- Map an internal media item into a Stremio meta object
 def convert_to_stremio_meta(item: dict) -> dict:
     media_type = "series" if item.get("media_type") == "tv" else "movie"
@@ -188,8 +209,8 @@ def convert_to_stremio_meta(item: dict) -> dict:
         "name": item.get("title"),
         "poster": _poster_url(item.get("imdb_id"), item.get("poster")),
         "logo": item.get("logo") or "",
-        "year": item.get("release_year"),
-        "releaseInfo": str(item.get("release_year", "")),
+        "year": _year_label(item) or item.get("release_year"),
+        "releaseInfo": _year_label(item),
         "imdb_id": item.get("imdb_id", ""),
         "moviedb_id": item.get("tmdb_id", ""),
         "background": _abs_media_url(item.get("backdrop")),
@@ -207,7 +228,8 @@ def format_released_date(media):
     year = media.get("release_year")
     if year:
         try:
-            return datetime(int(year), 1, 1).isoformat() + "Z"
+            y = int(str(year)[:4])
+            return datetime(y, 1, 1).isoformat() + "Z"
         except Exception:
             return None
     return None
@@ -535,14 +557,14 @@ async def get_meta(token: str, media_type: str, id: str, token_data: dict = Depe
         "type": "series" if media.get("media_type") == "tv" else "movie",
         "name": media.get("title", ""),
         "description": media.get("description", ""),
-        "year": str(media.get("release_year", "")),
+        "year": _year_label(media) or str(media.get("release_year", "")),
         "imdbRating": str(media.get("rating", "")),
         "genres": media.get("genres", []),
         "poster": _poster_url(media.get("imdb_id") or imdb_id, media.get("poster")),
         "logo": media.get("logo", ""),
         "background": _abs_media_url(media.get("backdrop")),
         "imdb_id": media.get("imdb_id", ""),
-        "releaseInfo": str(media.get("release_year", "")),
+        "releaseInfo": _year_label(media),
         "moviedb_id": media.get("tmdb_id", ""),
         "cast": media.get("cast") or [],
         "runtime": media.get("runtime") or "",

@@ -251,3 +251,53 @@ def empty_payload_base() -> dict:
         "original_language": None,
         "origin_country": [],
     }
+
+
+def logo_from_imdb(imdb_id: str | None) -> str:
+    """Metahub clearlogo built from an IMDb id (used when providers lack logos)."""
+    if not imdb_id:
+        return ""
+    iid = str(imdb_id).strip()
+    if not iid.startswith("tt"):
+        iid = f"tt{iid}" if iid.isdigit() else iid
+    return f"https://images.metahub.space/logo/medium/{iid}/img"
+
+
+def normalize_rating(value) -> float:
+    """Clamp provider scores into a 0–10 star-style rating.
+
+    TVDB ``score`` is often a popularity rank (hundreds/thousands) — those
+    must not surface as 953.4-style ratings.
+    """
+    try:
+        v = float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    if v <= 0:
+        return 0.0
+    if v <= 10:
+        return round(v, 1)
+    if v <= 100:
+        # percentage-style (e.g. 82.5 → 8.3)
+        return round(v / 10.0, 1)
+    # Popularity / rank scores — not a star rating
+    return 0.0
+
+
+def parse_year_range(start=None, end=None) -> tuple:
+    """Return (start_year:int|0, end_year:int|None) from provider fields."""
+    def _y(val):
+        if val is None or val == "":
+            return None
+        if isinstance(val, int):
+            return val if val > 0 else None
+        m = re.search(r"(19|20)\d{2}", str(val))
+        return int(m.group(0)) if m else None
+
+    s = _y(start)
+    e = _y(end)
+    if s and e and e < s:
+        s, e = e, s
+    if s and e and e == s:
+        e = None
+    return s or 0, e

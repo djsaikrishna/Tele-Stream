@@ -17,6 +17,9 @@ from Backend.helper.metadata.common import (
     TVDB_CACHE,
     TVDB_THRESHOLD,
     cached_call,
+    logo_from_imdb,
+    normalize_rating,
+    parse_year_range,
     score_candidate,
     year_from_str,
 )
@@ -246,13 +249,17 @@ def build_series_payload(
     artworks = series.get("artworks") or []
     poster = _pick_artwork(artworks, {2, 14, 27}) or _art_url(series.get("image") or "")
     backdrop = _pick_artwork(artworks, {3, 15, 19}) or _art_url(series.get("background") or "")
-    logo = _pick_artwork(artworks, {25, 23})
-    year = year_from_str(series.get("year") or (series.get("firstAired") or ""))
-    score = series.get("score") or 0
-    try:
-        rate = float(score) / 10.0 if float(score) > 10 else float(score)
-    except (TypeError, ValueError):
-        rate = 0
+    logo = _pick_artwork(artworks, {25, 23}) or logo_from_imdb(imdb_id)
+    year, year_end = parse_year_range(
+        series.get("firstAired") or series.get("year"),
+        series.get("lastAired") or series.get("nextAired"),
+    )
+    # TVDB `score` is popularity rank, not stars — prefer siteRating if present
+    rate = normalize_rating(
+        series.get("siteRating")
+        or series.get("rating")
+        or (series.get("score") if (series.get("score") or 0) <= 10 else 0)
+    )
     fallback_ep = f"S{season:02d}E{episode:02d}"
     ep_title = (ep or {}).get("name") or fallback_ep
     ep_image = _art_url((ep or {}).get("image") or "")
@@ -263,6 +270,7 @@ def build_series_payload(
         "imdb_id": imdb_id,
         "title": series.get("name") or series.get("slug") or "",
         "year": year,
+        "year_end": year_end,
         "rate": rate,
         "description": series.get("overview") or "",
         "poster": poster,
@@ -291,19 +299,20 @@ def build_movie_payload(movie: dict, quality, encoded_string) -> dict:
     artworks = movie.get("artworks") or []
     poster = _pick_artwork(artworks, {14, 2}) or _art_url(movie.get("image") or "")
     backdrop = _pick_artwork(artworks, {15, 3}) or ""
-    logo = _pick_artwork(artworks, {25, 23})
-    year = year_from_str(movie.get("year") or movie.get("releaseDate") or "")
-    score = movie.get("score") or 0
-    try:
-        rate = float(score) / 10.0 if float(score) > 10 else float(score)
-    except (TypeError, ValueError):
-        rate = 0
+    logo = _pick_artwork(artworks, {25, 23}) or logo_from_imdb(imdb_id)
+    year, year_end = parse_year_range(movie.get("year") or movie.get("releaseDate"), None)
+    rate = normalize_rating(
+        movie.get("siteRating")
+        or movie.get("rating")
+        or (movie.get("score") if (movie.get("score") or 0) <= 10 else 0)
+    )
     runtime = movie.get("runtime")
     return {
         "tmdb_id": tmdb_id,
         "imdb_id": imdb_id,
         "title": movie.get("name") or movie.get("slug") or "",
         "year": year,
+        "year_end": year_end,
         "rate": rate,
         "description": movie.get("overview") or "",
         "poster": poster,
