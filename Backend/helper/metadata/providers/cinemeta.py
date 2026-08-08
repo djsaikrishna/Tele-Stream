@@ -14,7 +14,7 @@ from Backend.helper.metadata.common import (
     cached_call,
     format_imdb_images,
     logo_from_imdb,
-    score_candidate,
+    score_candidate_aliases,
     year_from_str,
     build_query_variants,
 )
@@ -163,8 +163,22 @@ async def safe_search(title: str, type_: str, year: Optional[int] = None) -> str
             try:
                 results = await search_title_multi(query=query, type=type_, limit=8)
                 for r in results:
-                    score = score_candidate(
-                        title, year, r.get("title", ""), year_from_str(r.get("year", "")),
+                    # Cinemeta search rows are thin; still score primary + any alias-like fields
+                    aliases = []
+                    for key in ("aka", "aliases", "alternateNames", "genres"):
+                        pass  # genres are not aliases
+                    for key in ("aka", "aliases", "alternateNames", "name"):
+                        val = r.get(key)
+                        if not val or key == "name":
+                            continue
+                        if isinstance(val, list):
+                            aliases.extend(val)
+                        else:
+                            aliases.append(val)
+                    score = score_candidate_aliases(
+                        title, year, r.get("title", "") or r.get("name", ""),
+                        year_from_str(r.get("year", "")),
+                        aliases=aliases,
                         year_reliable=year_reliable, year_lower_bound=is_tv,
                     )
                     if score > best_score:

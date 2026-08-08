@@ -59,21 +59,29 @@ def _fuzzy(a: str, b: str) -> float:
 
 
 def _title_score(query: str, attrs: dict) -> float:
+    """Score against every Kitsu title variant + abbreviations (alias-aware)."""
+    from Backend.helper.metadata.common import score_candidate_aliases
     titles = attrs.get("titles") or {}
-    candidates = [
-        attrs.get("canonicalTitle"),
-        titles.get("en"),
-        titles.get("en_jp"),
-        titles.get("ja_jp"),
-        *(attrs.get("abbreviatedTitles") or []),
-    ]
-    q = _normalize(query)
-    best = 0.0
-    for cand in candidates:
-        cn = _normalize(cand or "")
-        if cn:
-            best = max(best, _fuzzy(q, cn))
-    return best
+    primary = (
+        attrs.get("canonicalTitle")
+        or titles.get("en")
+        or titles.get("en_jp")
+        or titles.get("ja_jp")
+        or ""
+    )
+    aliases = []
+    aliases.extend(titles.values() if isinstance(titles, dict) else [])
+    aliases.extend(attrs.get("abbreviatedTitles") or [])
+    # slug as last-resort alias (e.g. one-piece -> one piece)
+    slug = attrs.get("slug")
+    if slug:
+        aliases.append(str(slug).replace("-", " "))
+    return score_candidate_aliases(
+        query, None, primary, 0,
+        aliases=aliases,
+        year_reliable=False,
+        year_lower_bound=True,
+    )
 
 
 def _season_queries(title: str, season: Optional[int]) -> List[str]:

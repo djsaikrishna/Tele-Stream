@@ -21,6 +21,7 @@ from Backend.helper.metadata.common import (
     format_runtime,
     format_tmdb_image,
     score_candidate,
+    score_candidate_aliases,
 )
 from Backend.helper.settings_manager import SettingsManager
 from Backend.logger import LOGGER
@@ -134,8 +135,11 @@ async def pick_best(results, query_title: str, query_year: Optional[int], media_
     best_item, best_score = None, 0.0
     for item in results:
         r_title, r_year = tmdb_title_year(item, media_type)
-        score = score_candidate(
+        # original_title / original_name also counts as an alias
+        orig = getattr(item, "original_title", None) or getattr(item, "original_name", None) or ""
+        score = score_candidate_aliases(
             query_title, query_year, r_title, r_year,
+            aliases=[orig] if orig and orig != r_title else None,
             year_reliable=year_reliable, year_lower_bound=year_lower_bound,
         )
         scored.append((score, item, r_year))
@@ -145,20 +149,24 @@ async def pick_best(results, query_title: str, query_year: Optional[int], media_
     if best_score >= STRONG_MATCH:
         return best_item
 
+    # Fetch official alternative titles for top candidates
     scored.sort(key=lambda x: x[0], reverse=True)
     for _, item, r_year in scored[:ALT_TITLE_LOOKUPS]:
+        r_title, _ = tmdb_title_year(item, media_type)
+        orig = getattr(item, "original_title", None) or getattr(item, "original_name", None) or ""
         alt_titles = await _tmdb_alternative_titles(media_type, getattr(item, "id", None))
-        for alt in alt_titles:
-            alt_score = score_candidate(
-                query_title, query_year, alt, r_year,
-                year_reliable=year_reliable, year_lower_bound=year_lower_bound,
-            )
-            if alt_score > best_score:
-                best_score, best_item = alt_score, item
-                if best_score >= STRONG_MATCH:
-                    break
-        if best_score >= STRONG_MATCH:
-            break
+        aliases = list(alt_titles or [])
+        if orig:
+            aliases.append(orig)
+        alt_score = score_candidate_aliases(
+            query_title, query_year, r_title, r_year,
+            aliases=aliases,
+            year_reliable=year_reliable, year_lower_bound=year_lower_bound,
+        )
+        if alt_score > best_score:
+            best_score, best_item = alt_score, item
+            if best_score >= STRONG_MATCH:
+                break
 
     return best_item if best_score >= TMDB_THRESHOLD and best_item is not None else None
 

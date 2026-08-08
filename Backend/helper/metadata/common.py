@@ -152,6 +152,72 @@ def score_candidate(
     return score
 
 
+
+def collect_title_aliases(*groups) -> list:
+    """Flatten title / alias fields from provider payloads into unique strings."""
+    out: list = []
+    seen: set = set()
+    for group in groups:
+        if group is None:
+            continue
+        if isinstance(group, str):
+            items = [group]
+        elif isinstance(group, dict):
+            # translations / titles maps: use all values
+            items = list(group.values())
+        elif isinstance(group, (list, tuple, set)):
+            items = []
+            for x in group:
+                if isinstance(x, dict):
+                    # TVDB-style {"name": "..."} or {"title": "..."}
+                    items.append(x.get("name") or x.get("title") or x.get("alias") or "")
+                else:
+                    items.append(x)
+        else:
+            items = [str(group)]
+        for raw in items:
+            t = str(raw or "").strip()
+            if not t:
+                continue
+            key = t.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(t)
+    return out
+
+
+def score_candidate_aliases(
+    query_title: str,
+    query_year: Optional[int],
+    primary_title: str,
+    result_year: int,
+    aliases=None,
+    year_reliable: bool = True,
+    year_lower_bound: bool = False,
+) -> float:
+    """Score a candidate using primary title + all aliases (best match wins).
+
+    Used by TVDB / TMDB / Kitsu / Cinemeta so alternate names, translations,
+    and abbreviations participate in matching — not only the canonical title.
+    """
+    titles = collect_title_aliases(primary_title, aliases)
+    if not titles:
+        return 0.0
+    best = 0.0
+    for t in titles:
+        s = score_candidate(
+            query_title, query_year, t, result_year,
+            year_reliable=year_reliable,
+            year_lower_bound=year_lower_bound,
+        )
+        if s > best:
+            best = s
+            if best >= STRONG_MATCH:
+                break
+    return best
+
+
 def build_query_variants(title: str, year: Optional[int] = None) -> list:
     variants = [title]
     if year:

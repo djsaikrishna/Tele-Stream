@@ -20,7 +20,7 @@ from Backend.helper.metadata.common import (
     logo_from_imdb,
     normalize_rating,
     parse_year_range,
-    score_candidate,
+    score_candidate_aliases,
     year_from_str,
 )
 from Backend.helper.settings_manager import SettingsManager
@@ -139,13 +139,78 @@ async def search(title: str, year: Optional[int] = None, entity: str = "series")
         for r in results:
             r_title = r.get("name") or r.get("translations", {}).get("eng") or ""
             r_year = year_from_str(r.get("year") or r.get("first_air_time") or r.get("release_date"))
-            score = score_candidate(
+            # Search hits may include aliases / overviews / translations
+            aliases = []
+            for key in ("aliases", "alias", "primary_translated", "translations"):
+                val = r.get(key)
+                if not val:
+                    continue
+                if isinstance(val, dict):
+                    aliases.extend(val.values())
+                elif isinstance(val, list):
+                    aliases.extend(val)
+                else:
+                    aliases.append(val)
+            # Some TVDB search rows put extra names under overviews or slug-like fields
+            if r.get("slug"):
+                aliases.append(str(r["slug"]).replace("-", " "))
+            score = score_candidate_aliases(
                 title, year, r_title, r_year,
+                aliases=aliases,
                 year_reliable=(entity == "movie"),
                 year_lower_bound=(entity == "series"),
             )
             if score > best_score:
                 best_score, best = score, r
+
+        # If still borderline, pull extended aliases for top candidates
+        if best and best_score < STRONG_MATCH:
+            ranked = []
+            for r in results[:5]:
+                r_title = r.get("name") or ""
+                r_year = year_from_str(r.get("year") or r.get("first_air_time") or r.get("release_date"))
+                aliases = r.get("aliases") or []
+                sc = score_candidate_aliases(
+                    title, year, r_title, r_year, aliases=aliases,
+                    year_reliable=(entity == "movie"),
+                    year_lower_bound=(entity == "series"),
+                )
+                ranked.append((sc, r))
+            ranked.sort(key=lambda x: x[0], reverse=True)
+            for sc, r in ranked[:3]:
+                tvdb_id = r.get("tvdb_id") or r.get("id")
+                try:
+                    tvdb_id = int(tvdb_id)
+                except (TypeError, ValueError):
+                    continue
+                ext = None
+                try:
+                    if entity == "series":
+                        ext = await series_extended(tvdb_id)
+                    else:
+                        ext = await movie_extended(tvdb_id)
+                except Exception:
+                    ext = None
+                if not ext:
+                    continue
+                ext_aliases = ext.get("aliases") or []
+                ext_name = ext.get("name") or r.get("name") or ""
+                ext_year = year_from_str(
+                    ext.get("year") or ext.get("firstAired") or r.get("year")
+                )
+                # Also translations list if present
+                for tr in (ext.get("translations") or {}).get("nameTranslations") or []:
+                    if isinstance(tr, dict) and tr.get("name"):
+                        ext_aliases = list(ext_aliases) + [tr["name"]]
+                    elif isinstance(tr, str):
+                        ext_aliases = list(ext_aliases) + [tr]
+                sc2 = score_candidate_aliases(
+                    title, year, ext_name, ext_year, aliases=ext_aliases,
+                    year_reliable=(entity == "movie"),
+                    year_lower_bound=(entity == "series"),
+                )
+                if sc2 > best_score:
+                    best_score, best = sc2, r
 
         if best and best_score >= TVDB_THRESHOLD:
             LOGGER.info(
