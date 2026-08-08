@@ -165,7 +165,8 @@ def _video_filename(message) -> Optional[str]:
     if message.document:
         mime = message.document.mime_type or ""
         name = message.document.file_name
-        if mime.startswith("video/") or (name and name.lower().endswith(_VIDEO_EXTS)):
+        # Include single .zip archives (STORED inner video is streamable)
+        if mime.startswith("video/") or (name and (name.lower().endswith(_VIDEO_EXTS) or name.lower().endswith(".zip"))):
             return (message.caption or "").strip() or name or "video.mkv"
     return None
 
@@ -338,7 +339,8 @@ async def _search_channel(
                     size = get_readable_file_size(getattr(media, "file_size", 0) or 0)
                     quality = parsed.get("resolution") or "HD"
 
-                    token = await encode_string({
+                    is_single_zip = bool(filename and filename.lower().endswith(".zip"))
+                    payload = {
                         "global": True,
                         "chat_id": chat_id,
                         "msg_id": message.id,
@@ -346,7 +348,14 @@ async def _search_channel(
                         "size": size,
                         "quality": quality,
                         "source": chat_title,
-                    })
+                    }
+                    if is_single_zip:
+                        # Represent as a one-part zip so stream routes use the zip path
+                        payload["zip"] = True
+                        payload["parts"] = [{"chat_id": chat_id, "msg_id": message.id}]
+                        del payload["chat_id"]
+                        del payload["msg_id"]
+                    token = await encode_string(payload)
 
                     results.append({
                         "token": token,
@@ -354,6 +363,7 @@ async def _search_channel(
                         "size": size,
                         "source_chat": chat_title,
                         "quality": quality,
+                        "is_zip": is_single_zip,
                     })
                     LOGGER.debug(f"[GLOBAL SEARCH] Result found: {filename} in {chat_title}")
 
