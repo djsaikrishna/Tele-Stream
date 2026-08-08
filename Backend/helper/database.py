@@ -1325,7 +1325,6 @@ class Database:
                         episode_backdrop=metadata_info['episode_backdrop'],
                         overview=metadata_info['episode_overview'],
                         released=metadata_info['episode_released'],
-                        absolute_episode=metadata_info.get('absolute_episode'),
                         telegram=[quality_detail]
                     )]
                 )]
@@ -1577,9 +1576,6 @@ class Database:
                 if not existing_episode:
                     existing_season["episodes"].append(episode)
                     continue
-
-                if episode.get("absolute_episode") and not existing_episode.get("absolute_episode"):
-                    existing_episode["absolute_episode"] = episode["absolute_episode"]
 
                 existing_episode.setdefault("telegram", [])
 

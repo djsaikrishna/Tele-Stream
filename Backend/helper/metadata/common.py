@@ -154,6 +154,7 @@ def score_candidate(
 
 
 def collect_title_aliases(*groups) -> list:
+    """Flatten title / alias fields from provider payloads into unique strings."""
     out: list = []
     seen: set = set()
     for group in groups:
@@ -186,6 +187,20 @@ def collect_title_aliases(*groups) -> list:
     return out
 
 
+def score_candidate_aliases(
+    query_title: str,
+    query_year: Optional[int],
+    primary_title: str,
+    result_year: int,
+    aliases=None,
+    year_reliable: bool = True,
+    year_lower_bound: bool = False,
+) -> float:
+    """Score a candidate using primary title + all aliases (best match wins).
+
+    Used by TVDB / TMDB / Kitsu / Cinemeta so alternate names, translations,
+    and abbreviations participate in matching — not only the canonical title.
+    """
     titles = collect_title_aliases(primary_title, aliases)
     if not titles:
         return 0.0
@@ -306,6 +321,12 @@ def empty_payload_base() -> dict:
 
 
 def ensure_media_ids(payload: dict, *, seed: str = "") -> dict:
+    """Guarantee usable integer tmdb_id and string imdb_id for DB / Stremio / admin UI.
+
+    - Real provider IDs are kept when present.
+    - Missing tmdb_id → negative synthetic id (same pattern as manual/custom titles).
+    - Missing imdb_id → ``tg{abs(tmdb_id)}`` so Stremio idPrefixes (tt|tg) still work.
+    """
     if not isinstance(payload, dict):
         return payload
 
@@ -329,6 +350,7 @@ def ensure_media_ids(payload: dict, *, seed: str = "") -> dict:
         imdb = None
 
     if tmdb is None:
+        # Stable-ish synthetic id from available seeds so re-index merges
         import hashlib
         base = (
             seed
@@ -350,6 +372,7 @@ def ensure_media_ids(payload: dict, *, seed: str = "") -> dict:
 
 
 def coerce_int_id(value, default=None):
+    """Parse query/path tmdb_id that may arrive as 'null' / '' / None."""
     if value is None:
         return default
     if isinstance(value, int):

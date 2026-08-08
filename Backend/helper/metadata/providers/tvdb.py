@@ -332,6 +332,7 @@ def build_series_payload(
     ep_overview = (ep or {}).get("overview") or ""
     ep_aired = (ep or {}).get("aired") or (ep or {}).get("firstAired") or ""
     title = series.get("name") or series.get("slug") or ""
+    # Prefer English translation when available
     eng = None
     try:
         for tr in (series.get("translations") or {}).get("nameTranslations") or []:

@@ -82,46 +82,26 @@ def _title_score(
 
     return (2 * precision * recall) / (precision + recall)
 
-def _matches_episode(
-    parsed: dict,
-    season: Optional[int],
-    episode: Optional[int],
-    filename: str = "",
-    allow_absolute: bool = False,
-) -> bool:
+def _matches_episode(parsed: dict, season: Optional[int], episode: Optional[int]) -> bool:
     wants_episode = season is not None or episode is not None
     is_episode_like = parsed.get("season") is not None or parsed.get("episode") is not None
-    if allow_absolute and season is None and episode is not None:
-        try:
-            target = int(episode)
-        except (TypeError, ValueError):
-            return False
-        rv = parsed.get("episode")
-        candidates = []
-        if rv is not None:
-            if isinstance(rv, list):
-                candidates.extend(int(x) for x in rv if str(x).isdigit() or isinstance(x, int))
-            else:
-                try:
-                    candidates.append(int(rv))
-                except (TypeError, ValueError):
-                    pass
-        try:
-            from Backend.helper.metadata.parse import extract_absolute_episode
-            abs_ep = extract_absolute_episode(filename, parsed)
-            if abs_ep is not None:
-                candidates.append(int(abs_ep))
-        except Exception:
-            pass
-        candidates = list(dict.fromkeys(candidates))
-        if not candidates:
-            return True
-        return target in candidates
 
     if wants_episode and not is_episode_like:
         return False
     if not wants_episode and is_episode_like:
         return False
+
+    # Absolute / orphan: season is None, episode is set — match episode only
+    if season is None and episode is not None:
+        rv = parsed.get("episode")
+        if rv is None:
+            return True  # title-only parse still ok for absolute search hits
+        if isinstance(rv, list):
+            return int(episode) in [int(x) for x in rv]
+        try:
+            return int(rv) == int(episode)
+        except (TypeError, ValueError):
+            return False
 
     for value, parsed_key in ((season, "season"), (episode, "episode")):
         if value is None:
@@ -130,28 +110,22 @@ def _matches_episode(
         if rv is None:
             continue
         if isinstance(rv, list):
-            if value not in [int(x) for x in rv]:
+            if value not in rv:
                 return False
         elif int(rv) != int(value):
             return False
     return True
 
 
-def _validate_name(
-    filename: str,
-    expected_title: str,
-    season: Optional[int],
-    episode: Optional[int],
-    allow_absolute: bool = False,
-) -> Optional[dict]:
+def _validate_name(filename: str, expected_title: str, season: Optional[int], episode: Optional[int]) -> Optional[dict]:
     try:
         parsed = PTN.parse(filename)
     except Exception:
         return None
-    if "excess" in parsed and any("combined" in str(item).lower() for item in parsed["excess"]):
+    if "excess" in parsed and any("combined" in item.lower() for item in parsed["excess"]):
         LOGGER.info(f"Skipping {filename}: contains 'combined'")
         return None
-    if not _matches_episode(parsed, season, episode, filename=filename, allow_absolute=allow_absolute):
+    if not _matches_episode(parsed, season, episode):
         return None
 
     result_title = parsed.get("title", "")
@@ -167,16 +141,10 @@ def _validate_name(
     return parsed
 
 
-def _parse_and_validate(
-    filename: str,
-    expected_title: str,
-    season: Optional[int],
-    episode: Optional[int],
-    allow_absolute: bool = False,
-) -> Optional[dict]:
+def _parse_and_validate(filename: str, expected_title: str, season: Optional[int], episode: Optional[int]) -> Optional[dict]:
     if _MULTIPART_RE.search(filename):
         return None
-    return _validate_name(filename, expected_title, season, episode, allow_absolute=allow_absolute)
+    return _validate_name(filename, expected_title, season, episode)
 
 
 def _split_part_info(filename: str) -> Optional[tuple]:
@@ -338,7 +306,6 @@ async def _search_channel(
     expected_title: str,
     season: Optional[int],
     episode: Optional[int],
-    allow_absolute: bool = False,
 ) -> List[Dict]:
     global _userbot_session_dead
 
@@ -387,7 +354,7 @@ async def _search_channel(
                     filename = _video_filename(message)
                     if not filename:
                         continue
-                    parsed = _parse_and_validate(filename, expected_title, season, episode, allow_absolute=allow_absolute)
+                    parsed = _parse_and_validate(filename, expected_title, season, episode)
                     if parsed is None:
                         continue
 
@@ -479,7 +446,6 @@ async def global_search(
     year: Optional[int] = None,
     season: Optional[int] = None,
     episode: Optional[int] = None,
-    allow_absolute: bool = False,
 ) -> List[Dict]:
     expected_title = (expected_title or "").strip()
     if not expected_title or not is_global_search_enabled():
@@ -515,7 +481,7 @@ async def global_search(
 
     _last_search_ts[key] = now
     task = asyncio.create_task(
-        _run_global_search(expected_title, query_candidates, target_ids, season, episode, allow_absolute=allow_absolute)
+        _run_global_search(expected_title, query_candidates, target_ids, season, episode)
     )
     _inflight_tasks[key] = task
     try:
@@ -532,7 +498,6 @@ async def _run_global_search(
     target_ids: List[int],
     season: Optional[int],
     episode: Optional[int],
-    allow_absolute: bool = False,
 ) -> List[Dict]:
     async with _search_semaphore:
         chat_titles = await asyncio.gather(
@@ -555,7 +520,7 @@ async def _run_global_search(
             )
 
             search_tasks = [
-                _search_channel(botmod.Userbot, int(cid), title, search_query, expected_title, season, episode, allow_absolute=allow_absolute)
+                _search_channel(botmod.Userbot, int(cid), title, search_query, expected_title, season, episode)
                 for cid, title in zip(target_ids, resolved_titles)
             ]
             per_channel_results = await asyncio.gather(*search_tasks, return_exceptions=True)

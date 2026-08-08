@@ -28,7 +28,6 @@ class Episode(BaseModel):
     episode_backdrop: Optional[str] = None
     overview: Optional[str] = None
     released: Optional[str] = None
-    absolute_episode: Optional[int] = None
     telegram: Optional[List[QualityDetail]]
 
 
