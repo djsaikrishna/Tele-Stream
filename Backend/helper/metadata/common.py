@@ -185,7 +185,15 @@ def collect_title_aliases(*groups) -> list:
             out.append(t)
     return out
 
-
+def score_candidate_aliases(
+    query_title: str,
+    query_year: Optional[int],
+    primary_title: str,
+    result_year: int,
+    aliases=None,
+    year_reliable: bool = True,
+    year_lower_bound: bool = False,
+) -> float:
     titles = collect_title_aliases(primary_title, aliases)
     if not titles:
         return 0.0
